@@ -4,7 +4,7 @@ author: "David Kane"
 date: "3/24/2020"
 output: html_document
 ---
-
+# answers are in preceptor's repo
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(rstanarm)
@@ -22,6 +22,8 @@ x <- nes %>%
                                     race_adj == 2 ~ "Black",
                                     TRUE ~ "Other"))) %>% 
   select(-female, -race_adj)
+
+x
 ```
 
 
@@ -30,29 +32,144 @@ x <- nes %>%
 
 **Prompt:** We are still using data from the National Election Survey. We have added some new variables: `rvote` and `dvote`. Poke and around. Find things that are suspicious about this data.
 
+
+```{r}
+summary(x)
+glimpse(x)
+library(skimr)
+skim(x)
+```
+
+
 # Scene 2
 
 **Prompt:** Let's try to understand things which are associated with `dvote`, which is (claiming to have cast) a vote for the Democratic candidate for President. Estimate two models (`z_old` and `z_stan`) which uses `gender` to explain `dvote`. `z_old` uses the standard `glm()` command. `z_stan()` uses `stan_glm()`. Interpret the results from both printing the simple model objects and for running `summary()` on them.
 
+looks like 
+```{r}
+z_old <- glm(dvote ~ gender, data = x)
+summary(z_old)
+z_old
+# .46 is the oercentage of females that vote democratic and men are -0.05 less likely to vote democratic (41% percent)
+# glm is generalized linear model regression (runs logistic and other types BUT default runs linear - we want binomial) - need to specify
+glm(dvote ~ gender, data = x, family = binomial)
+# binomial means left hand is only 1/0
+# this is the regression we want 
+
+z_stan <- stan_glm(dvote ~ gender, data = x, family = binomial, refresh = 0)
+summary(z_stan)
+z_stan
+
+# same value on each 
+coef(z_stan)
+
+# seems like stan_glm gives you more info on uncertainty and more metrics when you run summary 
+# their COEFFICIENTS are the same - slope is the same 
+```
+
+
 # Scene 3
 
 **Prompt:** For females, the intercept is -0.1. What does that mean? For men, it is -0.1 + (-0.2) = -0.3. What is the substance meaning of -0.1 and -0.3? 
+```{r}
+# looking at the BINOMIAL regressions
+# -0.1 is the intercept for female and -0.3 
+x
+
+# maybe is the meaning that women are -0.1 
+# linear models give us a scale that matches the variables we are using, logistic regressions do not - curvy lines
+  # means we need to do more work to understand what the coefficients mean
+# on the logit scale of probability 
+  # intercept is not very useful but you caan use formular 1/1+exp(0.14318) = 0.4 : probability of female vote, converts between two models 
+  # 1 / (1+exp(-0.12 -0.2)*-1) = 0.4 : prob of male dvote 
+# easier way to do is to divide by 4 to give a rough sense of the actual effect in probability terms 
+
+# PAGE 204: if you divide -0.2 / 4 = -0.05 
+  # nonfemale dvote is 5% less likely 
+  # same thing that non-binomial stan_glm tells us in this case (but not always the case - when you're not at the middle of the curve)
+```
+
 
 # Scene 4
 
 **Prompt:** Let's look more closely at the coefficent on `non-female`. Interpret what it means. Can you put its magnitude onto the same scale as the outcome? That is, what I really want to know iw how much more (less?) likely men are to vote for the Democrat than women.  (Don't forget the divide-by-4 rule.) Now, just using simple dplyr commands, confirm that this is, in fact, the case in the raw data.
 
+```{r}
+# non-female is males and non-identifying females
+# we saw that it was -0.05 above with rule of 4
+
+x %>%
+  filter(gender == "non-female")%>%
+  summarise(dvote_nf = mean(dvote))
+
+x %>%
+  filter(gender == "female")%>%
+  summarise(dvote_f = mean(dvote))
+
+# 0.46 - 0.41 = 0.05 !!!!
+  # difference between mean dvote for females and males is -0.05, confirming the rule of 4 
+  # the values in the calculation above could have been attained by using the complicated equation above in scene 3
+    # instead, we can use rule of 4 and we verified by taking means of values (simple way of finding the plogis values)
+
+# again, plogis turns something into the probability scale (something from a binomial regression) - only on coefficients, NOT intercept 
+z_stan
+coef(z_stan)
+plogis(- 0.1436621 )
+  # = 0.46
+plogis( -0.1436621  +  -0.2199968 )
+  # = 0.41
+
+```
+
+
 # Scene 5
 
 **Prompt:** We have a model. Cool! Assume that we have new "data", a tibble with one row and one variable, `gender`, which is "female". What is the probability that this new person for vote Democratic?
+
+```{r}
+# we know the answer is just 0.46 but need to reconstruct with this simple tibble 
+v <- x%>%
+  select(gender)%>%
+  filter(gender == "female")%>%
+  head(1)
+
+g <- data.frame(v)
+
+# predicts likelihood of getting a dvote from a new data point (just a female)
+predict <- posterior_linpred(z_stan, transform = TRUE, newdata = g)
+mean(predict)
+```
+
 
 # Scene 6
 
 **Prompt:** So, with rstanarm models, at least, `predict()` doesn't (ever?) work. Instead, we need to use `posterior_linpred()`. But it sure is confusing! Continuing with our simple case of one new female observation, use `posterior_linpred()`, understand its outputs, and the provide a graphical display of those outputs. (Hint: Check the class of the output. It isn't a tibble!)
 
+```{r}
+
+# predicts likelihood of getting a dvote from a new data point (just a female)
+predict <- posterior_linpred(z_stan, transform = TRUE, newdata = g)
+mean(predict)
+
+hist(predict)
+
+# predict() just gives you a point answer - new female? prediction is 46%, doesn't give you any uncertainty 
+# posterior_predict gives you thousands of answers because adds uncertainty
+  # uncertainty of the forecast 
+# posterior_linpred gives you a different answer: what's your best guess for the likelihood of voting and whats the certainty around that guess?
+  # uncertainty of the mean
+
+```
+
+
 # Scene 7
 
 **Prompt:** Estimate a new model of `dvote`, this time with two explanatory variables: `gender` and `real_ideo`. (Like last time, you should treat `real_ideo` as a continuous variable.) Redo most of the above explorations with this new model.
+
+```{r}
+stan_glm(dvote ~ gender + real_ideo, data = x, refresh = 0, family = "binomial")
+```
+
 
 # Scene 8
 
